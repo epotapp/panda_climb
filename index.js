@@ -1,3 +1,5 @@
+// tbd: background music, time close to running out whistle, database for records
+
 const config = {
     type: Phaser.AUTO,
     width: window.innerWidth, // Responsive width
@@ -24,6 +26,12 @@ let score = 0;
 let scoreText;
 let gameOverText;
 let gameOver = false;
+let timerText; 
+let lifeBar; 
+let lifeBarWidth = 300;
+let initialTime = 30; 
+let initialDelay = 500;
+let startScore = -1;
 
 const stickTextures = ['stick_1', 'stick_2', 'stick_3']; // Sticks cycle
 let visibleBranches = 6; // Default number of visible branches, adjusted for each screen size
@@ -33,17 +41,78 @@ let pandaYPosition;
 let branchHeight = 64; // Height of each bamboo segment and branch
 
 function preload() {
-    this.load.image('stick_1', './assets/stick_1_128.png');
-    this.load.image('stick_2', './assets/stick_2_128.png');
-    this.load.image('stick_3', './assets/stick_3_128.png');
-    this.load.image('branchLeft', './assets/branch_left_128.png');
-    this.load.image('branchRight', './assets/branch_right_128.png');
-    this.load.image('pandaBase', './assets/panda_base_128.png');
-    this.load.image('pandaLeft', './assets/panda_left_128.png');
-    this.load.image('pandaRight', './assets/panda_right_128.png');
+    this.load.image('stick_1', 'assets/stick_1_128.png');
+    this.load.image('stick_2', 'assets/stick_2_128.png');
+    this.load.image('stick_3', 'assets/stick_3_128.png');
+    this.load.image('branchLeft', 'assets/branch_left_128.png');
+    this.load.image('branchRight', 'assets/branch_right_128.png');
+    this.load.image('pandaBase', 'assets/panda_base_128.png');
+    this.load.image('pandaLeft', 'assets/panda_left_128.png');
+    this.load.image('pandaRight', 'assets/panda_right_128.png');
+
+    this.load.image('narrowBackground', 'assets/narrow.png');
+    this.load.image('squareBackground', 'assets/square.png');
+    this.load.image('wideBackground', 'assets/wide.png');
+
+    this.load.audio('branchSound', 'assets/branch.mp3');
+    this.load.audio('lossSound', 'assets/ouch.mp3');
+
+    this.load.on('complete', function () { 
+        console.log('All assets loaded successfully'); 
+    });
 }
 
 function create() {
+
+    // Set background depending on aspect ratio
+    let aspectRatio = window.innerWidth / window.innerHeight; 
+    let backgroundKey;
+
+    if (aspectRatio < 0.75) { 
+        backgroundKey = 'narrowBackground'; 
+    } else if (aspectRatio > 1.5) { 
+        backgroundKey = 'wideBackground'; 
+    } else { 
+        backgroundKey = 'squareBackground';
+    }
+
+    
+    this.add.image(window.innerWidth / 2, window.innerHeight / 2, backgroundKey)
+        .setOrigin(0.5, 0.5)
+        .setDisplaySize(window.innerWidth, window.innerHeight);
+
+    
+    // Create start button
+    let graphics = this.add.graphics(); 
+    graphics.fillStyle(0x000000,1);
+    graphics.fillRect(this.cameras.main.width / 2 - 65, this.cameras.main.height/2 - 25,130,50);
+    graphics.setDepth(2)
+    graphics.fillStyle(0xffffff, 1); 
+    graphics.fillRect(this.cameras.main.width / 2 - 60, this.cameras.main.height/2 - 20,120,40);
+    graphics.setDepth(2)
+    
+    let buttonText = this.add.text(this.cameras.main.width / 2, this.cameras.main.height / 2, 'START', { 
+        fontSize: '32px', 
+        fill: '#000000', 
+        fontFamily: 'Source Han Serif CN' 
+    }).setOrigin(0.5, 0.5).setDepth(2);
+    buttonText.setInteractive();
+
+    buttonText.on('pointerover', () => buttonText.setStyle({ fill: '#808080' })); 
+    buttonText.on('pointerout', () => buttonText.setStyle({ fill: '#000000' }));
+
+    // On click, begin game, start sounds
+    buttonText.on('pointerdown', () => {
+        this.lossSound = this.sound.add('lossSound');
+        this.branchSound = this.sound.add('branchSound');
+        this.branchSound.play();
+
+        buttonText.destroy();
+        graphics.destroy();
+        startScore = 0;
+    });
+
+
     bambooGroup = this.add.group();
     branchGroup = this.add.group();
 
@@ -55,6 +124,7 @@ function create() {
         createBambooSegment(this, i);
     }
 
+
     // Initialize branch queue with dynamically calculated branches
     createBranches(this);
 
@@ -63,33 +133,81 @@ function create() {
     console.log('Panda added at:', panda.x, panda.y);
 
     // Score text
-    scoreText = this.add.text(window.innerWidth - 230, 20, `Score: 0`, { fontSize: '32px', fill: '#22b0ef' });
+    scoreText = this.add.text(0, 20, `0`, { 
+        fontSize: '72px', 
+        fill: '#ffffff',
+        fontFamily: 'Source Han Serif CN' 
+    });
+    scoreText.setX(window.innerWidth * (.6));
+    scoreText.setY(window.innerHeight * .4);
+    scoreText.setVisible(false);
+
+    // Timer text -- for debugging/dev work
+   // timerText = this.add.text(20, 20, `Time: ${initialTime}`, { fontSize: '32px', fill: '#22b0ef' });
+
+    // Lifebar
+    lifeBar = this.add.graphics(); 
+    drawLifeBar();
+    lifeBar.setVisible(false);
 
     // Game Over text (hidden at start)
-    gameOverText = this.add.text(window.innerWidth / 3, window.innerHeight / 2, 'GAME OVER', { fontSize: '64px', fill: '#22b0ef' });
+    gameOverText = this.add.text(0,0, 'GAME OVER', { 
+        fontSize: '80px', 
+        fill: '#ffffff',
+        fontFamily: 'Source Han Serif CN' 
+    });
+    
+    gameOverText.setX((window.innerWidth - gameOverText.width) / 2 - 10); 
+    gameOverText.setY((window.innerHeight - gameOverText.height) * .25 );
+
+    gameOverText.setDepth(2);
     gameOverText.setVisible(false);
 
     // Input handling for left and right (keyboard and touch events)
     this.input.keyboard.on('keydown', (event) => {
-        if (gameOver) {
-            reloadGame(this); // Restart game if it's game over
-        } else if (!isAnimating && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-            let playerMove = (event.key === 'ArrowLeft') ? 0 : 1;
-            console.log('Player pressed:', playerMove === 0 ? 'Left' : 'Right');
-            handleMove(this, playerMove);
+        if (startScore > 0) {
+            if (gameOver) {
+                reloadGame(this); // Restart game if it's game over
+            } else if (!isAnimating && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+                let playerMove = (event.key === 'ArrowLeft') ? 0 : 1;
+                console.log('Player pressed:', playerMove === 0 ? 'Left' : 'Right');
+                handleMove(this, playerMove);
+                if (!gameOver){this.branchSound.play()}
+                else{this.lossSound.play();}
+                
+            } 
+        }
+        if (startScore === 0){
+            startScore += 1;
+            // Timer event
+            timerEvent = createTimerEvent(this, initialDelay);
+            scoreText.setVisible(true);
+            lifeBar.setVisible(true);
         }
     });
 
     // Touch event handling for mobile devices
     this.input.on('pointerdown', (pointer) => {
-        if (gameOver) {
-            reloadGame(this); // Restart game if it's game over
-        } else if (!isAnimating) {
-            let playerMove = pointer.x < window.innerWidth / 2 ? 0 : 1; // Left or right half of screen
-            console.log('Player tapped:', playerMove === 0 ? 'Left' : 'Right');
-            handleMove(this, playerMove);
+        if (startScore > 0) {
+            if (gameOver) {
+                reloadGame(this); // Restart game if it's game over
+            } else if (!isAnimating) {
+                let playerMove = pointer.x < window.innerWidth / 2 ? 0 : 1; // Left or right half of screen
+                console.log('Player tapped:', playerMove === 0 ? 'Left' : 'Right');
+                handleMove(this, playerMove);
+                if (!gameOver){this.branchSound.play()}
+                else {this.lossSound.play();}
+            }
+        } 
+        if (startScore === 0){
+            startScore += 1;
+            // Timer event
+            timerEvent = createTimerEvent(this, initialDelay);
+            scoreText.setVisible(true);
+            lifeBar.setVisible(true);
         }
     });
+
 }
 
 function update() {}
@@ -144,6 +262,7 @@ function handleMove(scene, playerMove) {
         panda.setTexture(playerMove === 0 ? 'pandaLeft' : 'pandaRight');
 
         // Immediately remove the branch the panda grabs
+        
         removeBranchAtPandaLevel();
 
         // Update the score
@@ -198,18 +317,74 @@ function removeExtraBranches() {
 // Remove the branch at panda level
 function removeBranchAtPandaLevel() {
     branchGroup.children.iterate((branch) => {
-        if (branch.y === pandaYPosition) {
-            console.log('Removing branch at panda level, y:', branch.y);
-            branch.destroy(); // Remove the branch immediately when panda collects it
+        if (branch) {
+            console.log('Checking branch at y:', branch.y, 'against pandaYPosition:', pandaYPosition);
+            if (pandaYPosition - branch.y < 100) {
+                
+                console.log('Removing branch at panda level, y:', branch.y);
+                branch.destroy(); // Remove the branch immediately when panda collects it
+            }
         }
     });
 }
 
-// Update the score
+
+// Update the score and timer, timer delay
 function updateScore(amount) {
     score += amount;
-    scoreText.setText(`Score: ${score}`);
+   
+    scoreText.setText(`${score}`);
     console.log('Updated score:', score);
+
+    if (initialTime < 30) {
+        initialTime += 1; 
+    }
+    drawLifeBar();
+  //  timerText.setText(`Time: ${initialTime}`);
+    console.log('Updated timer:', initialTime);
+
+    if (score % 50 === 0){
+        updateTimer();
+    }
+
+}
+
+// Update timer
+function updateTimer() { 
+    if (!gameOver) { 
+        initialTime -= 1; 
+        drawLifeBar();
+      //  timerText.setText(`Time: ${initialTime}`); 
+        if (initialTime <= 0) { 
+            triggerGameOver(this.scene); 
+        } else { 
+            let newDelay = Math.max(initialDelay - (Math.floor(score / 50) * 100), 200); 
+            timerEvent.delay = newDelay;
+            console.log('Updated timer delay:', newDelay); 
+        }
+    } 
+    
+}
+
+// Draw timer lifebar
+function drawLifeBar() { 
+    lifeBar.clear(); 
+    lifeBar.fillStyle(0xffffff, 1); 
+    barWidth = (initialTime / 30) * lifeBarWidth; 
+    let centerX = (window.innerWidth - barWidth) / 2;
+    lifeBar.setDepth(2);
+    lifeBar.fillRect(centerX, 120, barWidth, 20);
+}
+
+// Create timer event
+function createTimerEvent(scene, delay) { 
+    console.log(`New delay: ${delay}`)
+    return scene.time.addEvent({ 
+        delay: delay, 
+        callback: updateTimer, 
+        callbackScope: scene, 
+        loop: true 
+    }); 
 }
 
 // Trigger Game Over
@@ -225,8 +400,12 @@ function reloadGame(scene) {
     console.log('Game reloaded');
     gameOver = false;
     score = 0;
-    scoreText.setText('Score: 0');
+    initialTime = 30;
+    scoreText.setText('0');
+ //   timerText.setText(`Time: ${initialTime}`);
     gameOverText.setVisible(false);
+    drawLifeBar();
+    
     isAnimating = false;
 
     // Clear and reinitialize branches
@@ -234,6 +413,7 @@ function reloadGame(scene) {
     branchGroup.clear(true, true); // Clear all branches
     createBranches(scene); // Recreate the initial branches
 
+    
     // Reset bamboo position (clear and recreate bamboo)
     bambooGroup.clear(true, true);
     for (let i = 0; i < visibleBranches + 4; i++) {
